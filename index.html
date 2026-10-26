@@ -135,9 +135,9 @@
         // 기본 PIN 해시값 (평문 노출 없음)
         const DEFAULT_PIN_HASH = "15d700ad21280a8c2fa03075c55c70a766ea8c9db5b5d8f7a850835e67514357";
 
-        // 기본 자주 쓰는 메모 프리셋
-        const DEFAULT_WITHDRAW_MEMOS = ['간식/군것질', '편의점', '문구/학용품', '장난감/취미', '다이소', '선물', '게임/콘텐츠', '도서/책', '현금인출'];
-        const DEFAULT_DEPOSIT_MEMOS = ['용돈', '심부름/칭찬', '세뱃돈/명절', '생일축하금', '상금/보너스', '저금통 입금', '할머니/할아버지'];
+        // 기본 자주 쓰는 메모 프리셋 (출금 / 입금)
+        const DEFAULT_WITHDRAW_MEMOS = ['출금', '현금 출금', '간식', '편의점', '문구/학용품', '장난감', '다이소', '선물'];
+        const DEFAULT_DEPOSIT_MEMOS = ['입금', '용돈', '추가 용돈', '심부름', '집안일', '칭찬 보상', '현금 입금', '저금통 입금'];
 
         // 기본 앱 설정
         const DEFAULT_CONFIG = {
@@ -188,7 +188,7 @@
             // 앱 설정 상태 (localStorage 초기 로드 + Firestore 실시간 연동)
             const [appConfig, setAppConfig] = useState(() => {
                 try {
-                    const saved = localStorage.getItem('jwbank_config');
+                    const saved = localStorage.getItem('jwbank_config_v2');
                     if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
                 } catch (e) {}
                 return DEFAULT_CONFIG;
@@ -250,11 +250,11 @@
                 const merged = { ...appConfig, ...newConfig };
                 setAppConfig(merged);
                 try {
-                    localStorage.setItem('jwbank_config', JSON.stringify(merged));
+                    localStorage.setItem('jwbank_config_v2', JSON.stringify(merged));
                 } catch (e) {}
                 if (user) {
                     try {
-                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config'), merged, { merge: true });
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config_v2'), merged, { merge: true });
                     } catch (e) {}
                 }
             };
@@ -272,12 +272,12 @@
                     setIsLoading(false);
                 });
 
-                const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config');
+                const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config_v2');
                 const unsubConfig = onSnapshot(configDocRef, (snap) => {
                     if (snap.exists()) {
                         const remoteConfig = { ...DEFAULT_CONFIG, ...snap.data() };
                         setAppConfig(remoteConfig);
-                        try { localStorage.setItem('jwbank_config', JSON.stringify(remoteConfig)); } catch (e) {}
+                        try { localStorage.setItem('jwbank_config_v2', JSON.stringify(remoteConfig)); } catch (e) {}
                     }
                 }, () => {});
 
@@ -1241,21 +1241,52 @@
                                     })
                                 ),
 
-                                // 메모 입력 및 자주 사용하는 내용 화면 선택 (칩 UI)
+                                // 메모 입력칸 및 바로 아래 자주 사용하는 문구 버튼(칩) 나열
                                 createElement('div', { className: "space-y-2.5" },
                                     createElement('div', { className: "flex justify-between items-center" },
-                                        createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "메모 (화면에서 선택하거나 직접 입력)"),
+                                        createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "메모"),
                                         createElement('button', {
                                             type: "button",
                                             onClick: () => setIsEditingMemos(!isEditingMemos),
                                             className: `text-[11px] font-bold px-2.5 py-1 rounded-lg transition ${isEditingMemos ? 'bg-[#3182F6] text-white' : 'bg-[#F2F4F6] text-[#4E5968]'}`
-                                        }, isEditingMemos ? "편집 완료" : "⚙️ 문구 편집")
+                                        }, isEditingMemos ? "편집 완료" : "+ 문구 추가/삭제")
                                     ),
 
-                                    // 자주 쓰는 메모 칩 목록
+                                    // 1. 메모 입력칸 (위)
+                                    createElement('div', { className: "relative" },
+                                        createElement('input', {
+                                            type: "text",
+                                            placeholder: "직접 입력하거나 아래 자주 쓰는 문구를 터치하세요",
+                                            className: "w-full bg-[#F2F4F6] p-4 pr-10 rounded-xl font-bold outline-none",
+                                            value: formMemo,
+                                            onChange: e => setFormMemo(e.target.value)
+                                        }),
+                                        formMemo && createElement('button', {
+                                            type: "button",
+                                            onClick: () => setFormMemo(''),
+                                            className: "absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-300 text-white text-xs font-black flex items-center justify-center"
+                                        }, "×")
+                                    ),
+
+                                    // 2. 메모 입력칸 바로 아래 자주 쓰는 문구 버튼(칩) 나열
                                     createElement('div', { className: "bg-[#F9FAFB] p-3.5 rounded-2xl border border-gray-100 space-y-2.5" },
-                                        createElement('p', { className: "text-[11px] font-bold text-[#8B95A1]" },
-                                            formType === 'withdraw' ? "📌 자주 쓰는 출금 메모" : "📌 자주 쓰는 입금 메모"
+                                        createElement('div', { className: "flex justify-between items-center" },
+                                            createElement('p', { className: "text-[11px] font-bold text-[#8B95A1]" },
+                                                formType === 'withdraw' ? "📌 자주 쓰는 문구 (출금)" : "📌 자주 쓰는 문구 (입금)"
+                                            ),
+                                            // 기본 '입금' / '출금' 빠른 입력 고정 칩
+                                            createElement('div', { className: "flex space-x-1" },
+                                                ['출금', '입금'].map(quickWord => createElement('button', {
+                                                    key: `quick-${quickWord}`,
+                                                    type: "button",
+                                                    onClick: () => setFormMemo(formMemo === quickWord ? '' : quickWord),
+                                                    className: `px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition active:scale-95 ${
+                                                        formMemo === quickWord
+                                                            ? (quickWord === '출금' ? 'bg-[#3182F6] text-white border-[#3182F6]' : 'bg-[#F04452] text-white border-[#F04452]')
+                                                            : (quickWord === '출금' ? 'bg-[#E8F3FF] text-[#3182F6] border-blue-100' : 'bg-[#FFF2F3] text-[#F04452] border-red-100')
+                                                    }`
+                                                }, quickWord))
+                                            )
                                         ),
                                         createElement('div', { className: "flex flex-wrap gap-2" },
                                             currentMemoPresets.baseList.map(preset => {
@@ -1296,7 +1327,7 @@
                                         isEditingMemos && createElement('div', { className: "flex space-x-2 pt-2 border-t border-gray-200" },
                                             createElement('input', {
                                                 type: "text",
-                                                placeholder: "새 자주 쓰는 문구 입력 (예: 학원간식)",
+                                                placeholder: "추가할 문구 입력 (예: 용돈, 출금)",
                                                 className: "flex-1 bg-white px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 outline-none",
                                                 value: newPresetMemo,
                                                 onChange: e => setNewPresetMemo(e.target.value),
@@ -1308,22 +1339,6 @@
                                                 className: "px-3.5 py-2 bg-[#191F28] text-white rounded-xl text-xs font-bold shrink-0"
                                             }, "+ 추가")
                                         )
-                                    ),
-
-                                    // 직접 입력 인풋 (선택한 문구 수정 또는 직접 입력)
-                                    createElement('div', { className: "relative" },
-                                        createElement('input', {
-                                            type: "text",
-                                            placeholder: "위 버튼을 누르거나 직접 입력하세요",
-                                            className: "w-full bg-[#F2F4F6] p-4 pr-10 rounded-xl font-bold outline-none",
-                                            value: formMemo,
-                                            onChange: e => setFormMemo(e.target.value)
-                                        }),
-                                        formMemo && createElement('button', {
-                                            type: "button",
-                                            onClick: () => setFormMemo(''),
-                                            className: "absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-300 text-white text-xs font-black flex items-center justify-center"
-                                        }, "×")
                                     )
                                 )
                             ),

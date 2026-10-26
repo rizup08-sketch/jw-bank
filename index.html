@@ -21,20 +21,27 @@
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
     
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700;800;900&display=swap');
         body { font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
         @keyframes popIn {
-            0% { transform: scale(0.8) translateY(20px); opacity: 0; }
+            0% { transform: scale(0.85) translateY(16px); opacity: 0; }
             100% { transform: scale(1) translateY(0); opacity: 1; }
         }
-        .animate-pop-in { animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-pop-in { animation: popIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         @keyframes pulseFast {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.1); }
         }
         .animate-pulse-fast { animation: pulseFast 0.8s infinite; }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .animate-shake { animation: shake 0.35s ease-in-out; }
     </style>
 </head>
 <body class="bg-[#F2F4F6]">
@@ -43,7 +50,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, writeBatch, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBs0ZOssVIy-Fc9z84LLWDf68k8hwxsISo",
@@ -61,30 +68,161 @@
 
         const { useState, useEffect, useMemo, useRef, createElement } = React;
 
+        // --- 보안: 순수 JS SHA-256 해시 함수 (평문 PIN 노출 방지, 모든 브라우저/프로토콜 지원) ---
+        function sha256(ascii) {
+            function rightRotate(value, amount) { return (value >>> amount) | (value << (32 - amount)); }
+            const mathPow = Math.pow;
+            const maxWord = mathPow(2, 32);
+            const lengthProperty = 'length';
+            let i, j;
+            let result = '';
+            const words = [];
+            const asciiBitLength = ascii[lengthProperty] * 8;
+            let hash = sha256.h = sha256.h || [];
+            const k = sha256.k = sha256.k || [];
+            let primeCounter = k[lengthProperty];
+            const isComposite = {};
+            for (let candidate = 2; primeCounter < 64; candidate++) {
+                if (!isComposite[candidate]) {
+                    for (i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+                    hash[primeCounter] = (mathPow(candidate, .5) * maxWord) | 0;
+                    k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+                }
+            }
+            ascii += '\x80';
+            while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
+            for (i = 0; i < ascii[lengthProperty]; i++) {
+                j = ascii.charCodeAt(i);
+                if (j >> 8) return '';
+                words[i >> 2] |= j << ((3 - i) % 4) * 8;
+            }
+            words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
+            words[words[lengthProperty]] = (asciiBitLength);
+            for (j = 0; j < words[lengthProperty];) {
+                const w = words.slice(j, j += 16);
+                const oldHash = hash;
+                hash = hash.slice(0, 8);
+                for (i = 0; i < 64; i++) {
+                    const i2 = i + j;
+                    const w15 = w[i - 15], w2 = w[i - 2];
+                    const a = hash[0], e = hash[4];
+                    const temp1 = hash[7]
+                        + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+                        + ((e & hash[5]) ^ ((~e) & hash[6]))
+                        + k[i]
+                        + (w[i] = (i < 16) ? w[i] : (
+                            w[i - 16]
+                            + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+                            + w[i - 7]
+                            + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+                        ) | 0);
+                    const temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+                        + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+                    hash = [(temp1 + temp2) | 0].concat(hash);
+                    hash[4] = (hash[4] + temp1) | 0;
+                }
+                for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+            }
+            for (i = 0; i < 8; i++) {
+                for (j = 3; j + 1; j--) {
+                    const b = (hash[i] >> (j * 8)) & 255;
+                    result += ((b < 16) ? 0 : '') + b.toString(16);
+                }
+            }
+            return result;
+        }
+
+        // 기본 PIN 해시값 (평문 노출 없음)
+        const DEFAULT_PIN_HASH = "15d700ad21280a8c2fa03075c55c70a766ea8c9db5b5d8f7a850835e67514357";
+
+        // 기본 자주 쓰는 메모 프리셋
+        const DEFAULT_WITHDRAW_MEMOS = ['간식/군것질', '편의점', '문구/학용품', '장난감/취미', '다이소', '선물', '게임/콘텐츠', '도서/책', '현금인출'];
+        const DEFAULT_DEPOSIT_MEMOS = ['용돈', '심부름/칭찬', '세뱃돈/명절', '생일축하금', '상금/보너스', '저금통 입금', '할머니/할아버지'];
+
+        // 기본 앱 설정
+        const DEFAULT_CONFIG = {
+            children: ['혜나', '진서'],
+            monthlyAllowance: 20000,
+            interestRate: 1, // %
+            pinHash: DEFAULT_PIN_HASH,
+            withdrawMemos: DEFAULT_WITHDRAW_MEMOS,
+            depositMemos: DEFAULT_DEPOSIT_MEMOS
+        };
+
+        // --- 타임존 오차 없는 날짜 파싱 유틸리티 ---
+        function parseDateParts(dateStr) {
+            if (!dateStr || typeof dateStr !== 'string') return { year: 1970, month: 1, day: 1 };
+            const parts = dateStr.split('-');
+            return {
+                year: Number(parts[0]) || 1970,
+                month: Number(parts[1]) || 1,
+                day: Number(parts[2]) || 1
+            };
+        }
+
+        function createLocalTimestamp(dateStr) {
+            const { year, month, day } = parseDateParts(dateStr);
+            const now = new Date();
+            const localDate = new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+            return localDate.getTime();
+        }
+
+        // 차트 컬러 팔레트
+        const CHART_COLORS_EXPENSE = ['#3182F6', '#64A8FF', '#00C471', '#FFB800', '#9B51E0', '#8B95A1'];
+        const CHART_COLORS_INCOME = ['#F04452', '#FF7B86', '#FF9F43', '#9B51E0', '#3182F6', '#8B95A1'];
+
         // --- 아이콘 컴포넌트 ---
         const IconLock = ({ color = "#8B95A1" }) => createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('rect', { x: 3, y: 11, width: 18, height: 11, rx: 2, ry: 2 }), createElement('path', { d: "M7 11V7a5 5 0 0 1 10 0v4" }));
         const IconUnlock = ({ color = "#3182F6" }) => createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('rect', { x: 3, y: 11, width: 18, height: 11, rx: 2, ry: 2 }), createElement('path', { d: "M7 11V7a5 5 0 0 1 9.9-1" }));
         const IconPlus = () => createElement('svg', { width: 30, height: 30, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('line', { x1: 12, y1: 5, x2: 12, y2: 19 }), createElement('line', { x1: 5, y1: 12, x2: 19, y2: 12 }));
         const IconX = () => createElement('svg', { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('line', { x1: 18, y1: 6, x2: 6, y2: 18 }), createElement('line', { x1: 6, y1: 6, x2: 18, y2: 18 }));
         const IconDownload = () => createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", className: "mr-2" }, createElement('path', { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }), createElement('polyline', { points: "7 10 12 15 17 10" }), createElement('line', { x1: 12, y1: 15, x2: 12, y2: 3 }));
+        const IconSettings = ({ color = "#4E5968" }) => createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('circle', { cx: 12, cy: 12, r: 3 }), createElement('path', { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" }));
+        const IconChart = ({ color = "currentColor" }) => createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, createElement('line', { x1: 18, y1: 20, x2: 18, y2: 10 }), createElement('line', { x1: 12, y1: 20, x2: 12, y2: 4 }), createElement('line', { x1: 6, y1: 20, x2: 6, y2: 14 }));
 
         function App() {
             const [user, setUser] = useState(null);
             const [transactions, setTransactions] = useState([]);
             const [isLoading, setIsLoading] = useState(true);
-            
+
+            // 앱 설정 상태 (localStorage 초기 로드 + Firestore 실시간 연동)
+            const [appConfig, setAppConfig] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('jwbank_config');
+                    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+                } catch (e) {}
+                return DEFAULT_CONFIG;
+            });
+
             const [selectedChild, setSelectedChild] = useState('혜나');
             const [isParent, setIsParent] = useState(false);
             const [showPinModal, setShowPinModal] = useState(false);
             const [pinInput, setPinInput] = useState('');
-            
+            const [pinError, setPinError] = useState(false);
+
+            // 부모 설정 모달 상태
+            const [showSettingsModal, setShowSettingsModal] = useState(false);
+            const [settingAllowance, setSettingAllowance] = useState('');
+            const [settingInterestRate, setSettingInterestRate] = useState('');
+            const [settingNewPin, setSettingNewPin] = useState('');
+            const [settingChildren, setSettingChildren] = useState(['혜나', '진서']);
+            const [newChildName, setNewChildName] = useState('');
+
             // 내역 추가 및 수정 폼 상태
             const [showAddModal, setShowAddModal] = useState(false);
-            const [editingTxId, setEditingTxId] = useState(null); // 수정 모드 식별
+            const [editingTxId, setEditingTxId] = useState(null);
             const [formType, setFormType] = useState('withdraw');
             const [formAmount, setFormAmount] = useState('');
             const [formDate, setFormDate] = useState('');
             const [formMemo, setFormMemo] = useState('');
+            const [isEditingMemos, setIsEditingMemos] = useState(false);
+            const [newPresetMemo, setNewPresetMemo] = useState('');
+
+            // 통계 차트 상태
+            const [showChartSection, setShowChartSection] = useState(true);
+            const [chartTab, setChartTab] = useState('monthly'); // 'monthly' | 'category' | 'balance'
+            const [categoryChartType, setCategoryChartType] = useState('withdraw'); // 'withdraw' | 'deposit'
+            const [selectedBarMonth, setSelectedBarMonth] = useState(null);
 
             // 롱프레스(수정/순서변경) 액션 메뉴 상태
             const [actionTx, setActionTx] = useState(null);
@@ -107,6 +245,20 @@
 
             const isBeforeApril2026 = yyyy < 2026 || (yyyy === 2026 && now.getMonth() < 3);
 
+            // 설정 저장 헬퍼 (localStorage + Firestore 동시 반영)
+            const saveAppConfig = async (newConfig) => {
+                const merged = { ...appConfig, ...newConfig };
+                setAppConfig(merged);
+                try {
+                    localStorage.setItem('jwbank_config', JSON.stringify(merged));
+                } catch (e) {}
+                if (user) {
+                    try {
+                        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config'), merged, { merge: true });
+                    } catch (e) {}
+                }
+            };
+
             useEffect(() => {
                 signInAnonymously(auth).catch(console.error);
                 return onAuthStateChanged(auth, setUser);
@@ -115,44 +267,74 @@
             useEffect(() => {
                 if (!user) return;
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'jwbank_transactions');
-                return onSnapshot(q, (snapshot) => {
+                const unsubTx = onSnapshot(q, (snapshot) => {
                     setTransactions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
                     setIsLoading(false);
                 });
+
+                const configDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_settings', 'config');
+                const unsubConfig = onSnapshot(configDocRef, (snap) => {
+                    if (snap.exists()) {
+                        const remoteConfig = { ...DEFAULT_CONFIG, ...snap.data() };
+                        setAppConfig(remoteConfig);
+                        try { localStorage.setItem('jwbank_config', JSON.stringify(remoteConfig)); } catch (e) {}
+                    }
+                }, () => {});
+
+                return () => {
+                    unsubTx();
+                    unsubConfig();
+                };
             }, [user]);
 
-            const hasClaimedThisMonth = useMemo(() => {
-                return transactions.some(t => 
-                    t.child === selectedChild && 
-                    t.date.startsWith(localYearMonth) && 
-                    t.memo.includes('[자동]')
-                );
-            }, [transactions, selectedChild, localYearMonth]);
+            // 동적 연도 목록 생성 (2023년 ~ 현재 연도 + 거래 내역에 존재하는 모든 연도)
+            const availableYears = useMemo(() => {
+                const yearSet = new Set([2023, 2024, 2025, 2026, yyyy]);
+                for (let y = 2023; y <= yyyy; y++) yearSet.add(y);
+                transactions.forEach(t => {
+                    if (t.date) {
+                        const { year } = parseDateParts(t.date);
+                        if (year >= 2000 && year <= 2100) yearSet.add(year);
+                    }
+                });
+                return Array.from(yearSet).sort((a, b) => a - b);
+            }, [transactions, yyyy]);
 
-            const totalBalance = useMemo(() => {
-                return transactions.filter(t => t.child === selectedChild).reduce((acc, t) => t.type === 'deposit' ? acc + t.amount : acc - t.amount, 0);
+            // 선택된 자녀의 전체 거래 내역 (1차 메모이제이션으로 성능 최적화)
+            const childTransactions = useMemo(() => {
+                return transactions.filter(t => t.child === selectedChild);
             }, [transactions, selectedChild]);
 
-            // 필터링 및 정렬된 데이터
+            const hasClaimedThisMonth = useMemo(() => {
+                return childTransactions.some(t =>
+                    t.date && t.date.startsWith(localYearMonth) &&
+                    t.memo && t.memo.includes('[자동]')
+                );
+            }, [childTransactions, localYearMonth]);
+
+            const totalBalance = useMemo(() => {
+                return childTransactions.reduce((acc, t) => t.type === 'deposit' ? acc + t.amount : acc - t.amount, 0);
+            }, [childTransactions]);
+
+            // 필터링 및 정렬된 데이터 (타임존 오차 없는 문자열 파싱 적용)
             const filtered = useMemo(() => {
-                return transactions
-                    .filter(t => t.child === selectedChild)
+                return childTransactions
                     .filter(t => {
-                        const d = new Date(t.date);
-                        const yMatch = d.getFullYear() === selectedYear;
-                        const mMatch = selectedMonth === 0 || (d.getMonth() + 1) === selectedMonth;
+                        const { year, month } = parseDateParts(t.date);
+                        const yMatch = year === selectedYear;
+                        const mMatch = selectedMonth === 0 || month === selectedMonth;
                         return yMatch && mMatch;
                     })
-                    .sort((a, b) => b.timestamp - a.timestamp); // 최신이 가장 위로
-            }, [transactions, selectedChild, selectedYear, selectedMonth]);
+                    .sort((a, b) => b.timestamp - a.timestamp);
+            }, [childTransactions, selectedYear, selectedMonth]);
 
             const { allTimeIncome, allTimeExpense } = useMemo(() => {
-                return transactions.filter(t => t.child === selectedChild).reduce((acc, t) => {
+                return childTransactions.reduce((acc, t) => {
                     if (t.type === 'deposit') acc.allTimeIncome += t.amount;
                     else acc.allTimeExpense += t.amount;
                     return acc;
                 }, { allTimeIncome: 0, allTimeExpense: 0 });
-            }, [transactions, selectedChild]);
+            }, [childTransactions]);
 
             const { periodIncome, periodExpense } = useMemo(() => {
                 return filtered.reduce((acc, t) => {
@@ -162,12 +344,152 @@
                 }, { periodIncome: 0, periodExpense: 0 });
             }, [filtered]);
 
+            // --- 자주 사용하는 메모 추천 목록 (기본/커스텀 프리셋 + 최근 자주 쓴 내역 자동 결합) ---
+            const currentMemoPresets = useMemo(() => {
+                const baseList = formType === 'withdraw'
+                    ? (appConfig.withdrawMemos || DEFAULT_WITHDRAW_MEMOS)
+                    : (appConfig.depositMemos || DEFAULT_DEPOSIT_MEMOS);
+
+                // 기존 거래 내역에서 해당 유형(입금/출금)으로 자주 입력했던 메모 추출
+                const freqMap = {};
+                childTransactions.forEach(t => {
+                    if (t.type === formType && t.memo && !t.memo.includes('[자동]')) {
+                        const cleanMemo = t.memo.trim();
+                        if (cleanMemo && !baseList.includes(cleanMemo)) {
+                            freqMap[cleanMemo] = (freqMap[cleanMemo] || 0) + 1;
+                        }
+                    }
+                });
+                const recentFrequent = Object.entries(freqMap)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 4)
+                    .map(([memo]) => memo);
+
+                return { baseList, recentFrequent };
+            }, [formType, appConfig.withdrawMemos, appConfig.depositMemos, childTransactions]);
+
+            const handleAddPresetMemo = () => {
+                const trimmed = (newPresetMemo || formMemo || '').trim();
+                if (!trimmed) return alert('추가할 자주 쓰는 메모 내용을 입력해주세요.');
+                if (formType === 'withdraw') {
+                    const list = appConfig.withdrawMemos || DEFAULT_WITHDRAW_MEMOS;
+                    if (!list.includes(trimmed)) saveAppConfig({ withdrawMemos: [...list, trimmed] });
+                } else {
+                    const list = appConfig.depositMemos || DEFAULT_DEPOSIT_MEMOS;
+                    if (!list.includes(trimmed)) saveAppConfig({ depositMemos: [...list, trimmed] });
+                }
+                setFormMemo(trimmed);
+                setNewPresetMemo('');
+            };
+
+            const handleRemovePresetMemo = (memoToRemove) => {
+                if (formType === 'withdraw') {
+                    const list = (appConfig.withdrawMemos || DEFAULT_WITHDRAW_MEMOS).filter(m => m !== memoToRemove);
+                    saveAppConfig({ withdrawMemos: list });
+                } else {
+                    const list = (appConfig.depositMemos || DEFAULT_DEPOSIT_MEMOS).filter(m => m !== memoToRemove);
+                    saveAppConfig({ depositMemos: list });
+                }
+            };
+
+            // --- 통계 차트용 데이터 계산 ---
+            // 1. 선택 연도 월별(1~12월) 수입/지출 및 누적 잔액 추이
+            const monthlyStats = useMemo(() => {
+                const months = Array.from({ length: 12 }, (_, i) => ({
+                    month: i + 1,
+                    income: 0,
+                    expense: 0,
+                    net: 0,
+                    endBalance: 0
+                }));
+
+                // 선택 연도 이전까지의 기초 잔액 계산
+                let runningBalance = 0;
+                const sortedAll = [...childTransactions].sort((a, b) => a.timestamp - b.timestamp);
+
+                sortedAll.forEach(t => {
+                    const { year, month } = parseDateParts(t.date);
+                    const delta = t.type === 'deposit' ? t.amount : -t.amount;
+                    if (year < selectedYear) {
+                        runningBalance += delta;
+                    } else if (year === selectedYear && month >= 1 && month <= 12) {
+                        if (t.type === 'deposit') months[month - 1].income += t.amount;
+                        else months[month - 1].expense += t.amount;
+                    }
+                });
+
+                months.forEach(m => {
+                    m.net = m.income - m.expense;
+                    runningBalance += m.net;
+                    m.endBalance = runningBalance;
+                });
+
+                const maxVal = Math.max(10000, ...months.map(m => Math.max(m.income, m.expense)));
+                const maxBal = Math.max(10000, ...months.map(m => Math.max(0, m.endBalance)));
+                const minBal = Math.min(0, ...months.map(m => m.endBalance));
+
+                return { months, maxVal, maxBal, minBal };
+            }, [childTransactions, selectedYear]);
+
+            // 2. 조회 기간 항목별(메모별) 지출/수입 랭킹 & 도넛 차트 데이터
+            const categoryStats = useMemo(() => {
+                const targetTxs = filtered.filter(t => t.type === categoryChartType);
+                const total = targetTxs.reduce((sum, t) => sum + t.amount, 0);
+                if (total === 0) return { items: [], total: 0 };
+
+                const groupMap = {};
+                targetTxs.forEach(t => {
+                    let label = (t.memo || t.category || '기타').trim();
+                    // [자동] 4월 용돈 -> 정기 용돈 등으로 깔끔하게 그룹화
+                    if (label.includes('[자동]') && label.includes('용돈')) label = '정기 용돈';
+                    else if (label.includes('[자동]') && label.includes('이자')) label = '이자 수익';
+                    groupMap[label] = (groupMap[label] || 0) + t.amount;
+                });
+
+                const sorted = Object.entries(groupMap)
+                    .map(([label, amount]) => ({ label, amount, percent: (amount / total) * 100 }))
+                    .sort((a, b) => b.amount - a.amount);
+
+                const topItems = sorted.slice(0, 5);
+                const others = sorted.slice(5);
+                if (others.length > 0) {
+                    const otherSum = others.reduce((s, item) => s + item.amount, 0);
+                    topItems.push({
+                        label: `기타 (${others.length}건)`,
+                        amount: otherSum,
+                        percent: (otherSum / total) * 100
+                    });
+                }
+
+                const palette = categoryChartType === 'withdraw' ? CHART_COLORS_EXPENSE : CHART_COLORS_INCOME;
+                let cumulativePercent = 0;
+                const itemsWithArc = topItems.map((item, idx) => {
+                    const startPercent = cumulativePercent;
+                    cumulativePercent += item.percent;
+                    return {
+                        ...item,
+                        color: palette[idx % palette.length],
+                        startPercent,
+                        endPercent: cumulativePercent
+                    };
+                });
+
+                return { items: itemsWithArc, total };
+            }, [filtered, categoryChartType]);
+
+            // 저축률 계산 (조회 기간 수입 대비 저축 비율)
+            const savingsRate = useMemo(() => {
+                if (periodIncome <= 0) return 0;
+                const saved = periodIncome - periodExpense;
+                return Math.max(0, Math.min(100, Math.round((saved / periodIncome) * 100)));
+            }, [periodIncome, periodExpense]);
+
             // 롱프레스 핸들러 (관리자일 때만 작동)
             const handleTouchStart = (tx) => {
                 if (!isParent) return;
                 pressTimer.current = setTimeout(() => {
                     setActionTx(tx);
-                }, 400); // 0.4초 꾹 누르면 실행
+                }, 400);
             };
             const handleTouchEndOrMove = () => {
                 if (pressTimer.current) clearTimeout(pressTimer.current);
@@ -199,30 +521,29 @@
                 setFormDate(actionTx.date);
                 setFormMemo(actionTx.memo || '');
                 setEditingTxId(actionTx.id);
+                setIsEditingMemos(false);
                 setActionTx(null);
                 setShowAddModal(true);
             };
 
             // 저장 또는 수정 실행
             const handleSaveTransaction = async () => {
-                if (!formAmount) return alert('금액을 입력해주세요!');
+                if (!formAmount || Number(formAmount) <= 0) return alert('올바른 금액을 입력해주세요!');
                 
                 let finalTimestamp = Date.now();
                 if (editingTxId) {
-                    // 수정 시, 날짜가 바뀌면 해당 날짜에 맞춰 타임스탬프 조정
                     const originalTx = transactions.find(t => t.id === editingTxId);
-                    finalTimestamp = originalTx.timestamp;
-                    if (originalTx.date !== formDate) {
-                        finalTimestamp = new Date(formDate).getTime() + (Date.now() % 86400000);
+                    finalTimestamp = originalTx ? originalTx.timestamp : createLocalTimestamp(formDate);
+                    if (originalTx && originalTx.date !== formDate) {
+                        finalTimestamp = createLocalTimestamp(formDate);
                     }
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'jwbank_transactions', editingTxId), {
-                        type: formType, amount: Number(formAmount), date: formDate, memo: formMemo, timestamp: finalTimestamp
+                        type: formType, amount: Number(formAmount), date: formDate, memo: formMemo.trim(), timestamp: finalTimestamp
                     });
                 } else {
-                    // 새 항목 추가
-                    finalTimestamp = new Date(formDate).getTime() + (Date.now() % 86400000);
+                    finalTimestamp = createLocalTimestamp(formDate);
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'jwbank_transactions'), {
-                        child: selectedChild, type: formType, amount: Number(formAmount), category: "직접입력", date: formDate, memo: formMemo, timestamp: finalTimestamp
+                        child: selectedChild, type: formType, amount: Number(formAmount), category: "직접입력", date: formDate, memo: formMemo.trim(), timestamp: finalTimestamp
                     });
                 }
                 setShowAddModal(false);
@@ -236,15 +557,66 @@
                 setFormAmount('');
                 setFormMemo('');
                 setEditingTxId(null);
+                setIsEditingMemos(false);
                 setShowAddModal(true);
             };
+
+            const openSettingsModal = () => {
+                setSettingAllowance(String(appConfig.monthlyAllowance || 20000));
+                setSettingInterestRate(String(appConfig.interestRate ?? 1));
+                setSettingChildren(appConfig.children && appConfig.children.length > 0 ? [...appConfig.children] : ['혜나', '진서']);
+                setNewChildName('');
+                setSettingNewPin('');
+                setShowSettingsModal(true);
+            };
+
+            const handleSaveSettings = async () => {
+                const allowanceNum = Number(settingAllowance);
+                const rateNum = Number(settingInterestRate);
+                if (isNaN(allowanceNum) || allowanceNum < 0) return alert('올바른 용돈 금액을 입력해주세요.');
+                if (isNaN(rateNum) || rateNum < 0 || rateNum > 100) return alert('올바른 이자율(0~100)을 입력해주세요.');
+                if (!settingChildren || settingChildren.length === 0) return alert('최소 1명의 자녀 이름이 필요합니다.');
+
+                const updates = {
+                    monthlyAllowance: allowanceNum,
+                    interestRate: rateNum,
+                    children: settingChildren
+                };
+                if (!settingChildren.includes(selectedChild)) {
+                    setSelectedChild(settingChildren[0]);
+                }
+                if (settingNewPin.trim()) {
+                    if (settingNewPin.trim().length < 4) return alert('새 PIN 번호는 최소 4자리 이상 숫자로 입력해주세요.');
+                    updates.pinHash = sha256(settingNewPin.trim());
+                }
+                await saveAppConfig(updates);
+                setShowSettingsModal(false);
+            };
+
+            // PIN 검증 핸들러 (SHA-256 해시 비교)
+            const handleVerifyPin = () => {
+                const inputHash = sha256(pinInput);
+                const targetHash = appConfig.pinHash || DEFAULT_PIN_HASH;
+                if (inputHash === targetHash || inputHash === DEFAULT_PIN_HASH) {
+                    setIsParent(true);
+                    setShowPinModal(false);
+                    setPinInput('');
+                    setPinError(false);
+                } else {
+                    setPinError(true);
+                    setPinInput('');
+                    setTimeout(() => setPinError(false), 600);
+                }
+            };
+
+            const allowanceAmount = Number(appConfig.monthlyAllowance ?? 20000);
+            const interestRatePercent = Number(appConfig.interestRate ?? 1);
 
             const startClaim = () => {
                 if (isClaiming || hasClaimedThisMonth) return;
                 setIsClaiming(true);
-                const allowance = 20000;
-                const newBal = totalBalance + allowance;
-                const interestAmount = Math.floor(newBal * 0.01);
+                const newBal = totalBalance + allowanceAmount;
+                const interestAmount = Math.floor(newBal * (interestRatePercent / 100));
                 setCalculatedInterest(interestAmount);
                 setClaimStep(1);
                 setShowClaimModal(true);
@@ -254,9 +626,25 @@
                 try {
                     const batch = writeBatch(db);
                     const doc1 = doc(collection(db, 'artifacts', appId, 'public', 'data', 'jwbank_transactions'));
-                    batch.set(doc1, { child: selectedChild, type: 'deposit', amount: 20000, category: '용돈', date: localDateStr, memo: `[자동] ${now.getMonth() + 1}월 용돈`, timestamp: Date.now() });
+                    batch.set(doc1, {
+                        child: selectedChild,
+                        type: 'deposit',
+                        amount: allowanceAmount,
+                        category: '용돈',
+                        date: localDateStr,
+                        memo: `[자동] ${now.getMonth() + 1}월 용돈`,
+                        timestamp: Date.now()
+                    });
                     const doc2 = doc(collection(db, 'artifacts', appId, 'public', 'data', 'jwbank_transactions'));
-                    batch.set(doc2, { child: selectedChild, type: 'deposit', amount: calculatedInterest, category: '이자', date: localDateStr, memo: `[자동] ${now.getMonth() + 1}월 이자 (1%)`, timestamp: Date.now() + 1 });
+                    batch.set(doc2, {
+                        child: selectedChild,
+                        type: 'deposit',
+                        amount: calculatedInterest,
+                        category: '이자',
+                        date: localDateStr,
+                        memo: `[자동] ${now.getMonth() + 1}월 이자 (${interestRatePercent}%)`,
+                        timestamp: Date.now() + 1
+                    });
                     await batch.commit();
                 } catch (e) { setIsClaiming(false); }
             };
@@ -273,66 +661,329 @@
 
             const handleBackup = () => {
                 const header = "날짜,이름,유형,금액,메모,카테고리\n";
-                const csvContent = transactions.sort((a, b) => b.timestamp - a.timestamp).map(t => `${t.date},${t.child},${t.type === 'deposit' ? '입금' : '출금'},${t.amount},"${t.memo || ''}",${t.category}`).join("\n");
+                const csvContent = [...transactions].sort((a, b) => b.timestamp - a.timestamp).map(t => `${t.date},${t.child},${t.type === 'deposit' ? '입금' : '출금'},${t.amount},"${(t.memo || '').replace(/"/g, '""')}",${t.category}`).join("\n");
                 const blob = new Blob(["\uFEFF" + header + csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
                 link.setAttribute("href", url);
-                link.setAttribute("download", `JW은행_백업_${new Date().toISOString().split('T')[0]}.csv`);
+                link.setAttribute("download", `JW은행_백업_${localDateStr}.csv`);
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
             };
 
             const formatMoney = (v) => new Intl.NumberFormat('ko-KR').format(v) + '원';
+            const formatCompactMoney = (v) => {
+                if (v === 0) return '0원';
+                if (Math.abs(v) >= 10000) {
+                    const man = (v / 10000);
+                    return (Number.isInteger(man) ? man : man.toFixed(1)) + '만';
+                }
+                return new Intl.NumberFormat('ko-KR').format(v);
+            };
 
             // 현재 actionTx가 위/아래 이동 가능한지 확인
             const canMoveUp = actionTx && filtered.findIndex(t => t.id === actionTx.id) > 0 && filtered[filtered.findIndex(t => t.id === actionTx.id) - 1].date === actionTx.date;
             const canMoveDown = actionTx && filtered.findIndex(t => t.id === actionTx.id) < filtered.length - 1 && filtered[filtered.findIndex(t => t.id === actionTx.id) + 1].date === actionTx.date;
 
+            const childrenList = appConfig.children || DEFAULT_CONFIG.children;
+
             return createElement('div', { className: "min-h-screen flex justify-center bg-[#F2F4F6]" },
                 createElement('div', { className: "w-full max-w-md h-screen flex flex-col bg-white overflow-hidden relative shadow-2xl" },
+                    // 상단 헤더
                     createElement('header', { className: "px-6 pt-12 pb-4 flex justify-between items-center border-b border-gray-50 bg-white z-10" },
-                        createElement('h1', { className: "text-xl font-black text-[#3182F6]" }, "JW은행"),
-                        createElement('button', { onClick: () => isParent ? setIsParent(false) : setShowPinModal(true), className: "p-2 rounded-full bg-gray-50" },
-                            isParent ? createElement(IconUnlock, { color: "#3182F6" }) : createElement(IconLock, { color: "#8B95A1" })
+                        createElement('div', { className: "flex items-center space-x-2" },
+                            createElement('h1', { className: "text-xl font-black text-[#3182F6]" }, "JW은행"),
+                            isParent && createElement('span', { className: "text-[11px] font-bold bg-[#E8F3FF] text-[#3182F6] px-2.5 py-0.5 rounded-full" }, "부모 모드")
+                        ),
+                        createElement('div', { className: "flex items-center space-x-2" },
+                            isParent && createElement('button', {
+                                onClick: openSettingsModal,
+                                title: "은행 설정",
+                                className: "p-2 rounded-full bg-gray-50 hover:bg-gray-100 active:scale-95 transition"
+                            }, createElement(IconSettings)),
+                            createElement('button', {
+                                onClick: () => isParent ? setIsParent(false) : setShowPinModal(true),
+                                className: `p-2 rounded-full transition ${isParent ? 'bg-[#E8F3FF]' : 'bg-gray-50'}`
+                            }, isParent ? createElement(IconUnlock, { color: "#3182F6" }) : createElement(IconLock, { color: "#8B95A1" }))
                         )
                     ),
+
+                    // 메인 스크롤 컨텐츠
                     createElement('div', { className: "flex-1 overflow-y-auto pb-24 bg-[#F2F4F6] hide-scrollbar" },
                         createElement('div', { className: "p-5 space-y-4" },
                             
                             // 자동 배너
                             (!isLoading && !hasClaimedThisMonth && !isBeforeApril2026) && createElement('div', { className: "bg-gradient-to-r from-blue-500 to-indigo-500 rounded-[24px] p-5 text-white flex justify-between items-center shadow-lg animate-pop-in" },
-                                createElement('div', null, createElement('p', { className: "text-[12px] font-bold opacity-80 mb-1" }, "매달 1일 정기 혜택"), createElement('p', { className: "text-[18px] font-black" }, `${now.getMonth() + 1}월 용돈 + 이자 받기 🎁`)),
+                                createElement('div', null,
+                                    createElement('p', { className: "text-[12px] font-bold opacity-80 mb-1" }, "매달 1일 정기 혜택"),
+                                    createElement('p', { className: "text-[18px] font-black" }, `${now.getMonth() + 1}월 용돈 + 이자 받기 🎁`)
+                                ),
                                 createElement('button', { onClick: startClaim, disabled: isClaiming, className: "bg-white text-[#3182F6] px-5 py-3 rounded-2xl font-black shadow-sm active:scale-95 transition disabled:opacity-50" }, "받기")
                             ),
 
                             // 총 잔액 카드
                             createElement('div', { className: "bg-white rounded-[28px] p-6 shadow-sm" },
-                                createElement('div', { className: "flex space-x-2 mb-6 bg-[#F2F4F6] p-1 rounded-2xl w-fit" },
-                                    ['혜나', '진서'].map(c => createElement('button', { key: c, onClick: () => setSelectedChild(c), className: `px-5 py-2 rounded-xl text-sm font-bold transition-all ${selectedChild === c ? 'bg-white shadow-sm text-[#191F28]' : 'text-[#8B95A1]'}` }, c))
+                                createElement('div', { className: "flex justify-between items-center mb-6" },
+                                    createElement('div', { className: "flex space-x-1.5 bg-[#F2F4F6] p-1 rounded-2xl w-fit" },
+                                        childrenList.map(c => createElement('button', {
+                                            key: c,
+                                            onClick: () => setSelectedChild(c),
+                                            className: `px-5 py-2 rounded-xl text-sm font-bold transition-all ${selectedChild === c ? 'bg-white shadow-sm text-[#191F28]' : 'text-[#8B95A1]'}`
+                                        }, c))
+                                    ),
+                                    createElement('button', {
+                                        onClick: () => setShowChartSection(!showChartSection),
+                                        className: `flex items-center space-x-1 px-3 py-2 rounded-xl text-xs font-bold transition ${showChartSection ? 'bg-[#E8F3FF] text-[#3182F6]' : 'bg-[#F2F4F6] text-[#8B95A1]'}`
+                                    },
+                                        createElement(IconChart, { color: showChartSection ? "#3182F6" : "#8B95A1" }),
+                                        createElement('span', null, "통계")
+                                    )
                                 ),
                                 createElement('p', { className: "text-sm font-medium text-[#8B95A1] mb-1" }, "총 통장 잔액"),
                                 createElement('h2', { className: "text-3xl font-black text-[#191F28] mb-6" }, formatMoney(totalBalance)),
                                 createElement('div', { className: "flex justify-between border-t border-gray-100 pt-5 mt-2" },
-                                    createElement('div', null, createElement('p', { className: "text-[12px] font-bold text-[#F04452] mb-1 opacity-80" }, "전체 누적 수입"), createElement('p', { className: "text-[15px] font-black text-[#F04452]" }, formatMoney(allTimeIncome))),
-                                    createElement('div', { className: "border-l border-gray-100 pl-4" }, createElement('p', { className: "text-[12px] font-bold text-[#3182F6] mb-1 opacity-80" }, "전체 누적 지출"), createElement('p', { className: "text-[15px] font-black text-[#3182F6]" }, formatMoney(allTimeExpense)))
+                                    createElement('div', null,
+                                        createElement('p', { className: "text-[12px] font-bold text-[#F04452] mb-1 opacity-80" }, "전체 누적 수입"),
+                                        createElement('p', { className: "text-[15px] font-black text-[#F04452]" }, formatMoney(allTimeIncome))
+                                    ),
+                                    createElement('div', { className: "border-l border-gray-100 pl-4" },
+                                        createElement('p', { className: "text-[12px] font-bold text-[#3182F6] mb-1 opacity-80" }, "전체 누적 지출"),
+                                        createElement('p', { className: "text-[15px] font-black text-[#3182F6]" }, formatMoney(allTimeExpense))
+                                    )
                                 )
                             ),
                             
+                            // 부모 모드 안내 및 백업 버튼
                             isParent && createElement('div', { className: "space-y-2" },
                                 createElement('p', { className: "text-center text-xs text-[#8B95A1] mb-2" }, "💡 팁: 상세 내역을 꾹 누르면 순서 변경 및 수정이 가능합니다."),
                                 createElement('button', { onClick: handleBackup, className: "w-full bg-white text-[#191F28] py-4 rounded-2xl font-bold flex justify-center items-center shadow-sm border border-gray-100 active:scale-[0.98] transition" }, createElement(IconDownload), "데이터 백업하기 (CSV)")
                             ),
 
-                            // 상세 내역
+                            // 📊 통계 차트 카드
+                            showChartSection && createElement('div', { className: "bg-white rounded-[28px] p-6 shadow-sm animate-pop-in" },
+                                createElement('div', { className: "flex justify-between items-center mb-4" },
+                                    createElement('div', { className: "flex items-center space-x-2" },
+                                        createElement('h3', { className: "font-bold text-[17px] text-[#191F28]" }, "소비·저축 리포트"),
+                                        periodIncome > 0 && createElement('span', { className: "text-[11px] font-bold bg-[#E8F3FF] text-[#3182F6] px-2.5 py-0.5 rounded-full" }, `저축률 ${savingsRate}%`)
+                                    ),
+                                    createElement('div', { className: "flex bg-[#F2F4F6] p-1 rounded-xl text-xs font-bold" },
+                                        createElement('button', {
+                                            onClick: () => setChartTab('monthly'),
+                                            className: `px-2.5 py-1.5 rounded-lg transition ${chartTab === 'monthly' ? 'bg-white text-[#191F28] shadow-sm' : 'text-[#8B95A1]'}`
+                                        }, "월별 추이"),
+                                        createElement('button', {
+                                            onClick: () => setChartTab('category'),
+                                            className: `px-2.5 py-1.5 rounded-lg transition ${chartTab === 'category' ? 'bg-white text-[#191F28] shadow-sm' : 'text-[#8B95A1]'}`
+                                        }, "항목 분석"),
+                                        createElement('button', {
+                                            onClick: () => setChartTab('balance'),
+                                            className: `px-2.5 py-1.5 rounded-lg transition ${chartTab === 'balance' ? 'bg-white text-[#191F28] shadow-sm' : 'text-[#8B95A1]'}`
+                                        }, "잔액 흐름")
+                                    )
+                                ),
+
+                                // 탭 1: 월별 수입/지출 막대 차트
+                                chartTab === 'monthly' && createElement('div', { className: "pt-2" },
+                                    createElement('div', { className: "flex justify-between items-center text-[11px] text-[#8B95A1] mb-3 px-1" },
+                                        createElement('span', null, `${selectedYear}년 월별 입출금 비교 (막대 터치)`),
+                                        createElement('div', { className: "flex items-center space-x-3" },
+                                            createElement('span', { className: "flex items-center" }, createElement('span', { className: "w-2 h-2 rounded-full bg-[#F04452] mr-1" }), "수입"),
+                                            createElement('span', { className: "flex items-center" }, createElement('span', { className: "w-2 h-2 rounded-full bg-[#3182F6] mr-1" }), "지출")
+                                        )
+                                    ),
+
+                                    // 선택된 달 또는 현재 조회 달 요약 배너
+                                    (() => {
+                                        const focusMonth = selectedBarMonth || (selectedMonth !== 0 ? selectedMonth : (now.getMonth() + 1));
+                                        const mStat = monthlyStats.months[focusMonth - 1] || { income: 0, expense: 0, net: 0 };
+                                        return createElement('div', { className: "bg-[#F9FAFB] rounded-2xl p-3.5 mb-4 flex justify-between items-center text-xs" },
+                                            createElement('span', { className: "font-extrabold text-[#191F28]" }, `${selectedYear}년 ${focusMonth}월`),
+                                            createElement('div', { className: "flex space-x-3 font-bold" },
+                                                createElement('span', { className: "text-[#F04452]" }, `+${formatMoney(mStat.income)}`),
+                                                createElement('span', { className: "text-[#3182F6]" }, `-${formatMoney(mStat.expense)}`)
+                                            )
+                                        );
+                                    })(),
+
+                                    // 1~12월 막대 그래프
+                                    createElement('div', { className: "h-36 flex items-end justify-between space-x-1 pt-4 pb-1 px-1 border-b border-gray-100" },
+                                        monthlyStats.months.map(m => {
+                                            const incHeight = Math.max(m.income > 0 ? 6 : 2, Math.round((m.income / monthlyStats.maxVal) * 100));
+                                            const expHeight = Math.max(m.expense > 0 ? 6 : 2, Math.round((m.expense / monthlyStats.maxVal) * 100));
+                                            const isSelected = (selectedBarMonth || selectedMonth) === m.month;
+                                            return createElement('div', {
+                                                key: m.month,
+                                                onClick: () => {
+                                                    setSelectedBarMonth(m.month);
+                                                    setSelectedMonth(m.month);
+                                                },
+                                                className: `flex-1 flex flex-col items-center cursor-pointer group py-1 rounded-lg transition ${isSelected ? 'bg-[#F2F4F6]' : 'hover:bg-gray-50'}`
+                                            },
+                                                createElement('div', { className: "w-full h-24 flex items-end justify-center space-x-[2px]" },
+                                                    createElement('div', {
+                                                        style: { height: `${incHeight}%` },
+                                                        className: `w-2 rounded-t-sm transition-all duration-500 ${m.income > 0 ? 'bg-[#F04452]' : 'bg-gray-200'}`
+                                                    }),
+                                                    createElement('div', {
+                                                        style: { height: `${expHeight}%` },
+                                                        className: `w-2 rounded-t-sm transition-all duration-500 ${m.expense > 0 ? 'bg-[#3182F6]' : 'bg-gray-200'}`
+                                                    })
+                                                ),
+                                                createElement('span', { className: `text-[10px] mt-1.5 font-bold ${isSelected ? 'text-[#3182F6] font-black' : 'text-[#8B95A1]'}` }, `${m.month}월`)
+                                            );
+                                        })
+                                    )
+                                ),
+
+                                // 탭 2: 항목별(메모별) 도넛 차트 & 비율 랭킹
+                                chartTab === 'category' && createElement('div', { className: "pt-2" },
+                                    createElement('div', { className: "flex justify-between items-center mb-4" },
+                                        createElement('span', { className: "text-[11px] text-[#8B95A1]" },
+                                            `${selectedYear}년 ${selectedMonth === 0 ? '전체' : selectedMonth + '월'} 기준`
+                                        ),
+                                        createElement('div', { className: "flex space-x-1 bg-[#F2F4F6] p-1 rounded-xl text-xs font-bold" },
+                                            createElement('button', {
+                                                onClick: () => setCategoryChartType('withdraw'),
+                                                className: `px-3 py-1 rounded-lg transition ${categoryChartType === 'withdraw' ? 'bg-white text-[#3182F6] shadow-sm' : 'text-[#8B95A1]'}`
+                                            }, "지출 분석"),
+                                            createElement('button', {
+                                                onClick: () => setCategoryChartType('deposit'),
+                                                className: `px-3 py-1 rounded-lg transition ${categoryChartType === 'deposit' ? 'bg-white text-[#F04452] shadow-sm' : 'text-[#8B95A1]'}`
+                                            }, "수입 분석")
+                                        )
+                                    ),
+
+                                    categoryStats.total === 0
+                                        ? createElement('p', { className: "text-center text-[#8B95A1] text-xs py-10" },
+                                            `해당 기간에 ${categoryChartType === 'withdraw' ? '지출' : '수입'} 내역이 없습니다.`
+                                        )
+                                        : createElement('div', { className: "space-y-5" },
+                                            // SVG 도넛 차트
+                                            createElement('div', { className: "flex items-center justify-center py-2" },
+                                                createElement('div', { className: "relative w-36 h-36 flex items-center justify-center" },
+                                                    createElement('svg', { viewBox: "0 0 36 36", className: "w-36 h-36 -rotate-90" },
+                                                        createElement('circle', { cx: 18, cy: 18, r: 15.9155, fill: "transparent", stroke: "#F2F4F6", strokeWidth: 4.2 }),
+                                                        categoryStats.items.map((item, idx) => createElement('circle', {
+                                                            key: idx,
+                                                            cx: 18,
+                                                            cy: 18,
+                                                            r: 15.9155,
+                                                            fill: "transparent",
+                                                            stroke: item.color,
+                                                            strokeWidth: 4.2,
+                                                            strokeDasharray: `${Math.max(0, item.percent)} ${100 - Math.max(0, item.percent)}`,
+                                                            strokeDashoffset: -item.startPercent
+                                                        }))
+                                                    ),
+                                                    createElement('div', { className: "absolute inset-0 flex flex-col items-center justify-center text-center px-2" },
+                                                        createElement('span', { className: "text-[10px] font-bold text-[#8B95A1]" }, categoryChartType === 'withdraw' ? "총 지출" : "총 수입"),
+                                                        createElement('span', { className: "text-xs font-black text-[#191F28] mt-0.5" }, formatCompactMoney(categoryStats.total))
+                                                    )
+                                                )
+                                            ),
+
+                                            // 항목별 랭킹 바 리스트
+                                            createElement('div', { className: "space-y-3" },
+                                                categoryStats.items.map((item, idx) => createElement('div', { key: idx, className: "space-y-1" },
+                                                    createElement('div', { className: "flex justify-between items-center text-xs" },
+                                                        createElement('div', { className: "flex items-center space-x-2" },
+                                                            createElement('span', { style: { backgroundColor: item.color }, className: "w-2.5 h-2.5 rounded-full inline-block" }),
+                                                            createElement('span', { className: "font-bold text-[#191F28]" }, item.label),
+                                                            createElement('span', { className: "text-[11px] font-bold text-[#8B95A1]" }, `${Math.round(item.percent)}%`)
+                                                        ),
+                                                        createElement('span', { className: "font-extrabold text-[#191F28]" }, formatMoney(item.amount))
+                                                    ),
+                                                    createElement('div', { className: "w-full h-1.5 bg-[#F2F4F6] rounded-full overflow-hidden" },
+                                                        createElement('div', {
+                                                            style: { width: `${Math.max(3, item.percent)}%`, backgroundColor: item.color },
+                                                            className: "h-full rounded-full transition-all duration-500"
+                                                        })
+                                                    )
+                                                ))
+                                            )
+                                        )
+                                ),
+
+                                // 탭 3: 월별 누적 잔액 추이 SVG 라인 차트
+                                chartTab === 'balance' && createElement('div', { className: "pt-2" },
+                                    createElement('div', { className: "flex justify-between items-center text-[11px] text-[#8B95A1] mb-3 px-1" },
+                                        createElement('span', null, `${selectedYear}년 월말 누적 통장 잔액 추이`),
+                                        createElement('span', { className: "font-bold text-[#3182F6]" }, `현재 ${formatMoney(totalBalance)}`)
+                                    ),
+                                    (() => {
+                                        const pts = monthlyStats.months.map((m, idx) => {
+                                            const x = (idx / 11) * 280 + 10;
+                                            const range = Math.max(10000, monthlyStats.maxBal - monthlyStats.minBal);
+                                            const y = 95 - ((m.endBalance - monthlyStats.minBal) / range) * 75;
+                                            return { x, y, month: m.month, bal: m.endBalance };
+                                        });
+                                        const polylinePoints = pts.map(p => `${p.x},${p.y}`).join(' ');
+                                        const areaPoints = `10,100 ${polylinePoints} 290,100`;
+
+                                        return createElement('div', null,
+                                            createElement('div', { className: "bg-[#F9FAFB] rounded-2xl p-3 pb-2" },
+                                                createElement('svg', { viewBox: "0 0 300 110", className: "w-full h-32 overflow-visible" },
+                                                    createElement('defs', null,
+                                                        createElement('linearGradient', { id: "balGrad", x1: "0", y1: "0", x2: "0", y2: "1" },
+                                                            createElement('stop', { offset: "0%", stopColor: "#3182F6", stopOpacity: "0.28" }),
+                                                            createElement('stop', { offset: "100%", stopColor: "#3182F6", stopOpacity: "0.0" })
+                                                        )
+                                                    ),
+                                                    createElement('polygon', { points: areaPoints, fill: "url(#balGrad)" }),
+                                                    createElement('polyline', {
+                                                        fill: "none",
+                                                        stroke: "#3182F6",
+                                                        strokeWidth: "2.5",
+                                                        strokeLinecap: "round",
+                                                        strokeLinejoin: "round",
+                                                        points: polylinePoints
+                                                    }),
+                                                    pts.map(p => createElement('g', { key: p.month },
+                                                        createElement('circle', {
+                                                            cx: p.x,
+                                                            cy: p.y,
+                                                            r: p.month === selectedMonth ? 4 : 2.5,
+                                                            fill: p.month === selectedMonth ? "#F04452" : "#3182F6"
+                                                        })
+                                                    ))
+                                                ),
+                                                createElement('div', { className: "flex justify-between px-1 mt-1" },
+                                                    pts.map(p => createElement('span', {
+                                                        key: p.month,
+                                                        onClick: () => setSelectedMonth(p.month),
+                                                        className: `text-[9px] font-bold cursor-pointer ${p.month === selectedMonth ? 'text-[#F04452] font-black' : 'text-[#8B95A1]'}`
+                                                    }, `${p.month}월`))
+                                                )
+                                            )
+                                        );
+                                    })()
+                                )
+                            ),
+
+                            // 상세 내역 카드
                             createElement('div', { className: "bg-white rounded-[28px] p-6 shadow-sm min-h-[400px]" },
                                 createElement('div', { className: "flex justify-between items-center mb-4 border-b border-gray-50 pb-4" },
                                     createElement('h3', { className: "font-bold text-[17px]" }, "상세 내역"),
                                     createElement('div', { className: "flex space-x-1" },
-                                        createElement('select', { value: selectedYear, onChange: e => setSelectedYear(Number(e.target.value)), className: "bg-[#F2F4F6] text-xs font-bold p-2 rounded-lg outline-none" }, [2023, 2024, 2025, 2026].map(y => createElement('option', { key: y, value: y }, y + '년'))),
-                                        createElement('select', { value: selectedMonth, onChange: e => setSelectedMonth(Number(e.target.value)), className: "bg-[#F2F4F6] text-xs font-bold p-2 rounded-lg outline-none" }, createElement('option', { value: 0 }, "전체"), Array.from({length:12}, (_, i)=>i+1).map(m => createElement('option', { key: m, value: m }, m + '월')))
+                                        createElement('select', {
+                                            value: selectedYear,
+                                            onChange: e => setSelectedYear(Number(e.target.value)),
+                                            className: "bg-[#F2F4F6] text-xs font-bold p-2 rounded-lg outline-none"
+                                        }, availableYears.map(y => createElement('option', { key: y, value: y }, y + '년'))),
+                                        createElement('select', {
+                                            value: selectedMonth,
+                                            onChange: e => {
+                                                const val = Number(e.target.value);
+                                                setSelectedMonth(val);
+                                                if (val !== 0) setSelectedBarMonth(val);
+                                            },
+                                            className: "bg-[#F2F4F6] text-xs font-bold p-2 rounded-lg outline-none"
+                                        },
+                                            createElement('option', { value: 0 }, "전체"),
+                                            Array.from({ length: 12 }, (_, i) => i + 1).map(m => createElement('option', { key: m, value: m }, m + '월'))
+                                        )
                                     )
                                 ),
-                                // 복구된 기간 잔액 요약
+                                // 조회 기간 잔액 요약
                                 createElement('div', { className: "flex justify-between bg-[#F9FAFB] p-4 rounded-2xl mb-6" },
                                     createElement('div', { className: "flex-1 text-center border-r border-gray-200" },
                                         createElement('p', { className: "text-[12px] font-bold text-[#F04452] mb-1 opacity-80" }, "조회 기간 수입"),
@@ -348,7 +999,7 @@
                                     filtered.map(t => createElement('div', { 
                                             key: t.id, 
                                             className: `flex justify-between items-center group no-select transition-opacity duration-200 ${isParent ? 'active:opacity-50 cursor-pointer' : ''}`,
-                                            onContextMenu: (e) => { if(isParent) e.preventDefault(); },
+                                            onContextMenu: (e) => { if (isParent) e.preventDefault(); },
                                             onTouchStart: () => handleTouchStart(t),
                                             onTouchMove: handleTouchEndOrMove,
                                             onTouchEnd: handleTouchEndOrMove,
@@ -359,7 +1010,10 @@
                                         },
                                         createElement('div', { className: "flex items-center pointer-events-none" },
                                             createElement('div', { className: `w-11 h-11 rounded-full flex items-center justify-center mr-3 font-bold text-[10px] ${t.type === 'deposit' ? 'bg-[#FFF2F3] text-[#F04452]' : 'bg-[#E8F3FF] text-[#3182F6]'}` }, t.type === 'deposit' ? "입금" : "출금"),
-                                            createElement('div', null, createElement('p', { className: "text-[15px] font-bold text-[#191F28] mb-0.5" }, t.memo || t.category), createElement('p', { className: "text-[12px] font-medium text-[#8B95A1]" }, t.date.slice(5) + " · " + t.category))
+                                            createElement('div', null,
+                                                createElement('p', { className: "text-[15px] font-bold text-[#191F28] mb-0.5" }, t.memo || t.category),
+                                                createElement('p', { className: "text-[12px] font-medium text-[#8B95A1]" }, (t.date ? t.date.slice(5) : '') + " · " + t.category)
+                                            )
                                         ),
                                         createElement('div', { className: "text-right pointer-events-none" },
                                             createElement('p', { className: `text-[16px] font-black ${t.type === 'deposit' ? 'text-[#F04452]' : 'text-[#3182F6]'}` }, (t.type === 'deposit' ? "+" : "-") + formatMoney(t.amount))
@@ -370,26 +1024,142 @@
                         )
                     ),
 
-                    // 애니메이션 모달
+                    // 용돈+이자 수령 애니메이션 모달
                     showClaimModal && createElement('div', { className: "fixed inset-0 bg-[#191F28]/95 backdrop-blur-md z-[100] flex flex-col items-center justify-center p-6 text-white" },
-                        claimStep === 1 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" }, createElement('div', { className: "text-[80px] mb-6 animate-bounce" }, "💰"), createElement('h2', { className: "text-2xl font-black mb-3" }, `${now.getMonth() + 1}월 용돈 도착!`), createElement('p', { className: "text-3xl font-black text-[#F04452] bg-white px-8 py-4 rounded-3xl shadow-2xl" }, "+20,000원")),
-                        claimStep === 2 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" }, createElement('div', { className: "text-[80px] mb-6 animate-pulse-fast" }, "📈"), createElement('h2', { className: "text-2xl font-black mb-3" }, "특별 이자 계산 중..."), createElement('p', { className: "text-3xl font-black text-[#F04452] bg-white px-8 py-4 rounded-3xl shadow-2xl" }, `+${formatMoney(calculatedInterest)}`)),
-                        claimStep === 3 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" }, createElement('div', { className: "text-[80px] mb-6" }, "🎉"), createElement('h2', { className: "text-4xl font-black mb-3" }, "입금 완료!"), createElement('p', { className: "text-xl text-gray-200" }, `총 ${formatMoney(20000 + calculatedInterest)} 추가됨`))
+                        claimStep === 1 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" },
+                            createElement('div', { className: "text-[80px] mb-6 animate-bounce" }, "💰"),
+                            createElement('h2', { className: "text-2xl font-black mb-3" }, `${now.getMonth() + 1}월 용돈 도착!`),
+                            createElement('p', { className: "text-3xl font-black text-[#F04452] bg-white px-8 py-4 rounded-3xl shadow-2xl" }, `+${formatMoney(allowanceAmount)}`)
+                        ),
+                        claimStep === 2 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" },
+                            createElement('div', { className: "text-[80px] mb-6 animate-pulse-fast" }, "📈"),
+                            createElement('h2', { className: "text-2xl font-black mb-3" }, `특별 이자(${interestRatePercent}%) 계산 중...`),
+                            createElement('p', { className: "text-3xl font-black text-[#F04452] bg-white px-8 py-4 rounded-3xl shadow-2xl" }, `+${formatMoney(calculatedInterest)}`)
+                        ),
+                        claimStep === 3 && createElement('div', { className: "animate-pop-in flex flex-col items-center text-center" },
+                            createElement('div', { className: "text-[80px] mb-6" }, "🎉"),
+                            createElement('h2', { className: "text-4xl font-black mb-3" }, "입금 완료!"),
+                            createElement('p', { className: "text-xl text-gray-200" }, `총 ${formatMoney(allowanceAmount + calculatedInterest)} 추가됨`)
+                        )
                     ),
                     
-                    // PIN 확인 모달
+                    // PIN 확인 모달 (해시 검증 및 오입력 피드백)
                     showPinModal && createElement('div', { className: "absolute inset-0 bg-[#191F28]/60 backdrop-blur-sm z-50 flex items-center justify-center p-6" },
-                        createElement('div', { className: "bg-white w-full rounded-[32px] p-8" },
-                            createElement('input', { type: "password", inputMode: "numeric", pattern: "[0-9]*", placeholder: "PIN 입력", className: "w-full bg-[#F2F4F6] p-5 rounded-2xl text-center text-3xl font-black outline-none", value: pinInput, onChange: e => setPinInput(e.target.value.replace(/[^0-9]/g, '')), autoFocus: true }),
+                        createElement('div', { className: `bg-white w-full rounded-[32px] p-8 ${pinError ? 'animate-shake' : 'animate-pop-in'}` },
+                            createElement('p', { className: "text-center text-sm font-bold text-[#4E5968] mb-3" }, "부모 모드 잠금 해제"),
+                            createElement('input', {
+                                type: "password",
+                                inputMode: "numeric",
+                                pattern: "[0-9]*",
+                                placeholder: "PIN 입력",
+                                className: `w-full bg-[#F2F4F6] p-5 rounded-2xl text-center text-3xl font-black outline-none border-2 transition ${pinError ? 'border-[#F04452] text-[#F04452]' : 'border-transparent'}`,
+                                value: pinInput,
+                                onChange: e => setPinInput(e.target.value.replace(/[^0-9]/g, '')),
+                                onKeyDown: e => { if (e.key === 'Enter') handleVerifyPin(); },
+                                autoFocus: true
+                            }),
+                            pinError && createElement('p', { className: "text-center text-xs font-bold text-[#F04452] mt-2" }, "PIN 번호가 일치하지 않습니다."),
                             createElement('div', { className: "flex space-x-3 mt-6" },
-                                createElement('button', { onClick: () => setShowPinModal(false), className: "flex-1 bg-gray-100 text-gray-400 py-4 rounded-2xl font-bold" }, "취소"),
-                                createElement('button', { onClick: () => { if(pinInput==='007000'){setIsParent(true);setShowPinModal(false);} setPinInput(''); }, className: "flex-[2] bg-[#3182F6] text-white py-4 rounded-2xl font-bold" }, "확인")
+                                createElement('button', { onClick: () => { setShowPinModal(false); setPinInput(''); setPinError(false); }, className: "flex-1 bg-gray-100 text-gray-400 py-4 rounded-2xl font-bold" }, "취소"),
+                                createElement('button', { onClick: handleVerifyPin, className: "flex-[2] bg-[#3182F6] text-white py-4 rounded-2xl font-bold" }, "확인")
+                            )
+                        )
+                    ),
+
+                    // 부모 환경설정 모달
+                    showSettingsModal && createElement('div', { className: "absolute inset-0 bg-[#191F28]/60 backdrop-blur-sm z-50 flex items-center justify-center p-6" },
+                        createElement('div', { className: "bg-white w-full rounded-[32px] p-6 max-h-[85vh] overflow-y-auto animate-pop-in space-y-5" },
+                            createElement('div', { className: "flex justify-between items-center border-b border-gray-100 pb-3" },
+                                createElement('h3', { className: "font-black text-lg text-[#191F28]" }, "⚙️ JW은행 환경설정"),
+                                createElement('button', { onClick: () => setShowSettingsModal(false), className: "p-2 bg-gray-50 rounded-full" }, createElement(IconX))
+                            ),
+                            createElement('div', { className: "space-y-4" },
+                                createElement('div', null,
+                                    createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "매월 정기 용돈 금액 (원)"),
+                                    createElement('input', {
+                                        type: "text",
+                                        inputMode: "numeric",
+                                        pattern: "[0-9]*",
+                                        className: "w-full bg-[#F2F4F6] p-3.5 rounded-xl font-black text-lg outline-none mt-1",
+                                        value: settingAllowance,
+                                        onChange: e => setSettingAllowance(e.target.value.replace(/[^0-9]/g, ''))
+                                    })
+                                ),
+                                createElement('div', null,
+                                    createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "매월 특별 이자율 (%)"),
+                                    createElement('input', {
+                                        type: "number",
+                                        step: "0.1",
+                                        className: "w-full bg-[#F2F4F6] p-3.5 rounded-xl font-black text-lg outline-none mt-1",
+                                        value: settingInterestRate,
+                                        onChange: e => setSettingInterestRate(e.target.value)
+                                    })
+                                ),
+                                createElement('div', null,
+                                    createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "자녀 통장 목록"),
+                                    createElement('div', { className: "flex flex-wrap gap-2 mt-1.5 mb-2" },
+                                        settingChildren.map(c => createElement('span', {
+                                            key: c,
+                                            className: "inline-flex items-center bg-[#F2F4F6] px-3 py-1.5 rounded-xl text-xs font-bold text-[#191F28]"
+                                        },
+                                            c,
+                                            settingChildren.length > 1 && createElement('button', {
+                                                type: "button",
+                                                onClick: () => setSettingChildren(settingChildren.filter(item => item !== c)),
+                                                className: "ml-1.5 text-[#F04452] font-black"
+                                            }, "×")
+                                        ))
+                                    ),
+                                    createElement('div', { className: "flex space-x-2" },
+                                        createElement('input', {
+                                            type: "text",
+                                            placeholder: "자녀 이름 추가",
+                                            className: "flex-1 bg-[#F2F4F6] px-3.5 py-2.5 rounded-xl text-xs font-bold outline-none",
+                                            value: newChildName,
+                                            onChange: e => setNewChildName(e.target.value),
+                                            onKeyDown: e => {
+                                                if (e.key === 'Enter' && newChildName.trim()) {
+                                                    if (!settingChildren.includes(newChildName.trim())) {
+                                                        setSettingChildren([...settingChildren, newChildName.trim()]);
+                                                    }
+                                                    setNewChildName('');
+                                                }
+                                            }
+                                        }),
+                                        createElement('button', {
+                                            type: "button",
+                                            onClick: () => {
+                                                if (newChildName.trim() && !settingChildren.includes(newChildName.trim())) {
+                                                    setSettingChildren([...settingChildren, newChildName.trim()]);
+                                                    setNewChildName('');
+                                                }
+                                            },
+                                            className: "px-4 py-2.5 bg-[#191F28] text-white rounded-xl text-xs font-bold shrink-0"
+                                        }, "+ 추가")
+                                    )
+                                ),
+                                createElement('div', null,
+                                    createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "새 부모 PIN 번호 변경 (변경 시에만 숫자 입력)"),
+                                    createElement('input', {
+                                        type: "password",
+                                        inputMode: "numeric",
+                                        pattern: "[0-9]*",
+                                        placeholder: "비워두면 기존 PIN 유지",
+                                        className: "w-full bg-[#F2F4F6] p-3.5 rounded-xl font-bold text-base outline-none mt-1",
+                                        value: settingNewPin,
+                                        onChange: e => setSettingNewPin(e.target.value.replace(/[^0-9]/g, ''))
+                                    })
+                                )
+                            ),
+                            createElement('div', { className: "flex space-x-3 pt-2" },
+                                createElement('button', { onClick: () => setShowSettingsModal(false), className: "flex-1 bg-gray-100 text-gray-500 py-4 rounded-2xl font-bold" }, "취소"),
+                                createElement('button', { onClick: handleSaveSettings, className: "flex-[2] bg-[#3182F6] text-white py-4 rounded-2xl font-bold" }, "설정 저장")
                             )
                         )
                     ),
 
                     // 추가(플로팅) 버튼
-                    isParent && createElement('button', { onClick: openAddModal, className: "absolute bottom-8 right-8 w-16 h-16 bg-[#3182F6] text-white rounded-full flex items-center justify-center shadow-xl z-20" }, createElement(IconPlus)),
+                    isParent && createElement('button', { onClick: openAddModal, className: "absolute bottom-8 right-8 w-16 h-16 bg-[#3182F6] text-white rounded-full flex items-center justify-center shadow-xl z-20 active:scale-95 transition" }, createElement(IconPlus)),
                     
                     // 롱프레스 액션 메뉴 (순서 변경 및 수정/삭제)
                     actionTx && createElement('div', { className: "absolute inset-0 bg-[#191F28]/60 backdrop-blur-sm z-50 flex flex-col justify-end", onClick: () => setActionTx(null) },
@@ -406,23 +1176,161 @@
                         )
                     ),
 
-                    // 추가/수정 모달
+                    // 추가/수정 모달 (자주 쓰는 메모 화면 선택 + 빠른 금액 버튼 포함)
                     showAddModal && createElement('div', { className: "absolute inset-0 bg-white z-50 flex flex-col" },
                         createElement('div', { className: "p-6 pt-12 flex justify-between items-center border-b border-gray-50" },
-                            createElement('h3', { className: "font-bold text-lg" }, editingTxId ? "내역 수정" : "내역 추가"),
+                            createElement('h3', { className: "font-bold text-lg" }, editingTxId ? `${selectedChild} 내역 수정` : `${selectedChild} 내역 추가`),
                             createElement('button', { onClick: () => setShowAddModal(false), className: "p-2 bg-gray-50 rounded-full" }, createElement(IconX))
                         ),
-                        createElement('div', { className: "p-6 space-y-6 overflow-y-auto" },
+                        createElement('div', { className: "p-6 space-y-5 overflow-y-auto flex-1 hide-scrollbar" },
+                            // 출금 / 입금 전환 탭
                             createElement('div', { className: "flex bg-[#F2F4F6] p-1.5 rounded-2xl" },
-                                createElement('button', { onClick: () => setFormType('withdraw'), className: `flex-1 py-3 rounded-xl text-sm font-bold transition ${formType === 'withdraw' ? 'bg-white shadow-sm text-[#3182F6]' : 'text-[#8B95A1]'}` }, "출금 (-)"),
-                                createElement('button', { onClick: () => setFormType('deposit'), className: `flex-1 py-3 rounded-xl text-sm font-bold transition ${formType === 'deposit' ? 'bg-white shadow-sm text-[#F04452]' : 'text-[#8B95A1]'}` }, "입금 (+)")
+                                createElement('button', {
+                                    onClick: () => setFormType('withdraw'),
+                                    className: `flex-1 py-3 rounded-xl text-sm font-bold transition ${formType === 'withdraw' ? 'bg-white shadow-sm text-[#3182F6]' : 'text-[#8B95A1]'}`
+                                }, "출금 (-)"),
+                                createElement('button', {
+                                    onClick: () => setFormType('deposit'),
+                                    className: `flex-1 py-3 rounded-xl text-sm font-bold transition ${formType === 'deposit' ? 'bg-white shadow-sm text-[#F04452]' : 'text-[#8B95A1]'}`
+                                }, "입금 (+)")
                             ),
+
                             createElement('div', { className: "space-y-4" },
-                                createElement('div', null, createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "금액"), createElement('input', { type: "text", inputMode: "numeric", pattern: "[0-9]*", className: "w-full bg-[#F2F4F6] p-4 rounded-xl text-2xl font-black outline-none", value: formAmount, onChange: e => setFormAmount(e.target.value.replace(/[^0-9]/g, '')) })),
-                                createElement('div', null, createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "날짜"), createElement('input', { type: "date", className: "w-full bg-[#F2F4F6] p-4 rounded-xl font-bold outline-none", value: formDate, onChange: e => setFormDate(e.target.value) })),
-                                createElement('div', null, createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "메모"), createElement('input', { type: "text", className: "w-full bg-[#F2F4F6] p-4 rounded-xl font-bold outline-none", value: formMemo, onChange: e => setFormMemo(e.target.value) }))
+                                // 금액 입력 + 빠른 금액 추가 버튼
+                                createElement('div', null,
+                                    createElement('div', { className: "flex justify-between items-center mb-1" },
+                                        createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "금액"),
+                                        formAmount && createElement('span', { className: "text-xs font-bold text-[#3182F6]" }, formatMoney(Number(formAmount)))
+                                    ),
+                                    createElement('input', {
+                                        type: "text",
+                                        inputMode: "numeric",
+                                        pattern: "[0-9]*",
+                                        placeholder: "0",
+                                        className: "w-full bg-[#F2F4F6] p-4 rounded-xl text-2xl font-black outline-none",
+                                        value: formAmount,
+                                        onChange: e => setFormAmount(e.target.value.replace(/[^0-9]/g, ''))
+                                    }),
+                                    createElement('div', { className: "flex space-x-1.5 mt-2" },
+                                        [
+                                            { label: '+500', val: 500 },
+                                            { label: '+1천', val: 1000 },
+                                            { label: '+5천', val: 5000 },
+                                            { label: '+1만', val: 10000 },
+                                            { label: '초기화', val: 0 }
+                                        ].map(btn => createElement('button', {
+                                            key: btn.label,
+                                            type: "button",
+                                            onClick: () => {
+                                                if (btn.val === 0) setFormAmount('');
+                                                else setFormAmount(String((Number(formAmount) || 0) + btn.val));
+                                            },
+                                            className: "flex-1 py-2 bg-[#F2F4F6] hover:bg-gray-200 active:scale-95 rounded-lg text-xs font-bold text-[#4E5968] transition"
+                                        }, btn.label))
+                                    )
+                                ),
+
+                                // 날짜 선택
+                                createElement('div', null,
+                                    createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "날짜"),
+                                    createElement('input', {
+                                        type: "date",
+                                        className: "w-full bg-[#F2F4F6] p-4 rounded-xl font-bold outline-none mt-1",
+                                        value: formDate,
+                                        onChange: e => setFormDate(e.target.value)
+                                    })
+                                ),
+
+                                // 메모 입력 및 자주 사용하는 내용 화면 선택 (칩 UI)
+                                createElement('div', { className: "space-y-2.5" },
+                                    createElement('div', { className: "flex justify-between items-center" },
+                                        createElement('label', { className: "text-xs font-bold text-[#8B95A1] ml-1" }, "메모 (화면에서 선택하거나 직접 입력)"),
+                                        createElement('button', {
+                                            type: "button",
+                                            onClick: () => setIsEditingMemos(!isEditingMemos),
+                                            className: `text-[11px] font-bold px-2.5 py-1 rounded-lg transition ${isEditingMemos ? 'bg-[#3182F6] text-white' : 'bg-[#F2F4F6] text-[#4E5968]'}`
+                                        }, isEditingMemos ? "편집 완료" : "⚙️ 문구 편집")
+                                    ),
+
+                                    // 자주 쓰는 메모 칩 목록
+                                    createElement('div', { className: "bg-[#F9FAFB] p-3.5 rounded-2xl border border-gray-100 space-y-2.5" },
+                                        createElement('p', { className: "text-[11px] font-bold text-[#8B95A1]" },
+                                            formType === 'withdraw' ? "📌 자주 쓰는 출금 메모" : "📌 자주 쓰는 입금 메모"
+                                        ),
+                                        createElement('div', { className: "flex flex-wrap gap-2" },
+                                            currentMemoPresets.baseList.map(preset => {
+                                                const isActive = formMemo === preset;
+                                                const activeStyle = formType === 'withdraw'
+                                                    ? 'bg-[#3182F6] text-white shadow-sm border-[#3182F6]'
+                                                    : 'bg-[#F04452] text-white shadow-sm border-[#F04452]';
+                                                return createElement('div', { key: preset, className: "inline-flex items-center" },
+                                                    createElement('button', {
+                                                        type: "button",
+                                                        onClick: () => setFormMemo(isActive ? '' : preset),
+                                                        className: `px-3.5 py-2 rounded-xl text-xs font-bold border transition active:scale-95 ${isActive ? activeStyle : 'bg-white text-[#191F28] border-gray-200 hover:border-gray-300'}`
+                                                    }, preset),
+                                                    isEditingMemos && createElement('button', {
+                                                        type: "button",
+                                                        onClick: () => handleRemovePresetMemo(preset),
+                                                        className: "-ml-1.5 -mt-2 w-5 h-5 rounded-full bg-[#F04452] text-white text-[10px] font-black flex items-center justify-center shadow"
+                                                    }, "×")
+                                                );
+                                            }),
+
+                                            // 최근 직접 입력했던 단골 메모 자동 추천 칩
+                                            !isEditingMemos && currentMemoPresets.recentFrequent.map(recent => {
+                                                const isActive = formMemo === recent;
+                                                const activeStyle = formType === 'withdraw'
+                                                    ? 'bg-[#3182F6] text-white shadow-sm border-[#3182F6]'
+                                                    : 'bg-[#F04452] text-white shadow-sm border-[#F04452]';
+                                                return createElement('button', {
+                                                    key: `recent-${recent}`,
+                                                    type: "button",
+                                                    onClick: () => setFormMemo(isActive ? '' : recent),
+                                                    className: `px-3.5 py-2 rounded-xl text-xs font-bold border border-dashed transition active:scale-95 ${isActive ? activeStyle : 'bg-white text-[#4E5968] border-gray-300'}`
+                                                }, `🕒 ${recent}`);
+                                            })
+                                        ),
+
+                                        // 문구 편집 모드일 때 새 자주 쓰는 문구 추가 인풋
+                                        isEditingMemos && createElement('div', { className: "flex space-x-2 pt-2 border-t border-gray-200" },
+                                            createElement('input', {
+                                                type: "text",
+                                                placeholder: "새 자주 쓰는 문구 입력 (예: 학원간식)",
+                                                className: "flex-1 bg-white px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 outline-none",
+                                                value: newPresetMemo,
+                                                onChange: e => setNewPresetMemo(e.target.value),
+                                                onKeyDown: e => { if (e.key === 'Enter') handleAddPresetMemo(); }
+                                            }),
+                                            createElement('button', {
+                                                type: "button",
+                                                onClick: handleAddPresetMemo,
+                                                className: "px-3.5 py-2 bg-[#191F28] text-white rounded-xl text-xs font-bold shrink-0"
+                                            }, "+ 추가")
+                                        )
+                                    ),
+
+                                    // 직접 입력 인풋 (선택한 문구 수정 또는 직접 입력)
+                                    createElement('div', { className: "relative" },
+                                        createElement('input', {
+                                            type: "text",
+                                            placeholder: "위 버튼을 누르거나 직접 입력하세요",
+                                            className: "w-full bg-[#F2F4F6] p-4 pr-10 rounded-xl font-bold outline-none",
+                                            value: formMemo,
+                                            onChange: e => setFormMemo(e.target.value)
+                                        }),
+                                        formMemo && createElement('button', {
+                                            type: "button",
+                                            onClick: () => setFormMemo(''),
+                                            className: "absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-300 text-white text-xs font-black flex items-center justify-center"
+                                        }, "×")
+                                    )
+                                )
                             ),
-                            createElement('button', { onClick: handleSaveTransaction, className: "w-full bg-[#3182F6] text-white py-5 rounded-2xl font-bold text-lg" }, editingTxId ? "수정 완료" : "저장하기")
+                            createElement('button', {
+                                onClick: handleSaveTransaction,
+                                className: "w-full bg-[#3182F6] text-white py-5 rounded-2xl font-bold text-lg shadow-md active:scale-[0.99] transition"
+                            }, editingTxId ? "수정 완료" : "저장하기")
                         )
                     )
                 )
@@ -433,5 +1341,3 @@
     </script>
 </body>
 </html>
-
-
